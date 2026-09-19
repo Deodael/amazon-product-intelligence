@@ -22,29 +22,28 @@ A **router** classifies each question and directs it to the right engine. The sy
 ```
 
 ```
-                User Question
-                      │
-                      ▼
-                ┌──────────┐
-                │  Router  │  (rule-based classification)
-                └────┬─────┘
-                     │
-    ┌────────────────┼────────────────┐
-    ▼                ▼                ▼
-```
-
-┌────────┐      ┌────────┐      ┌────────┐
-│  SQL   │      │  RAG   │      │ HYBRID │
-│ Engine │      │ Engine │      │ Engine │
-└────┬───┘      └────┬───┘      └────┬───┘
-│               │               │
-▼               ▼               ▼
-┌─────────┐    ┌──────────┐    ┌──────────┐
-│ SQLite  │    │ ChromaDB │    │ SQL+RAG  │
-│  (SQL)  │    │(vectors) │    │combined  │
-└─────────┘    └──────────┘    └──────────┘
+User Question
+## 🏗️ Architecture
 
 ```
+                    User Question
+                          │
+                          ▼
+                    ┌──────────┐
+                    │  Router  │
+                    └────┬─────┘
+                         │
+        ┌────────────────┼────────────────┐
+        ▼                ▼                ▼
+   ┌────────┐      ┌────────┐      ┌────────┐
+   │  SQL   │      │  RAG   │      │ HYBRID │
+   └───┬────┘      └───┬────┘      └───┬────┘
+       │               │               │
+       ▼               ▼               ▼
+   ┌─────────┐    ┌──────────┐    ┌──────────┐
+   │ SQLite  │    │ ChromaDB │    │ SQL+RAG  │
+   └─────────┘    └──────────┘    └──────────┘
+
 
 **Stack:**
 - **Data:** SQLite database (`database.sqlite`, 372 MB, 568,454 rows)
