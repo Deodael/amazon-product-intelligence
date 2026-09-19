@@ -225,3 +225,4 @@ data/
 
 # Environment
 .env
+chroma_db/
