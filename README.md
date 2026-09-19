@@ -17,33 +17,19 @@ A **router** classifies each question and directs it to the right engine. The sy
 
 ---
 
+
 ## 🏗️ Architecture
 
-```
+**Flow:** `Question → Router → [SQL | RAG | Hybrid] → Answer`
 
-```
-User Question
-## 🏗️ Architecture
+The router classifies each question and directs it to the appropriate engine:
 
-```
-                    User Question
-                          │
-                          ▼
-                    ┌──────────┐
-                    │  Router  │
-                    └────┬─────┘
-                         │
-        ┌────────────────┼────────────────┐
-        ▼                ▼                ▼
-   ┌────────┐      ┌────────┐      ┌────────┐
-   │  SQL   │      │  RAG   │      │ HYBRID │
-   └───┬────┘      └───┬────┘      └───┬────┘
-       │               │               │
-       ▼               ▼               ▼
-   ┌─────────┐    ┌──────────┐    ┌──────────┐
-   │ SQLite  │    │ ChromaDB │    │ SQL+RAG  │
-   └─────────┘    └──────────┘    └──────────┘
-```
+| Engine | Purpose | Backed By |
+|--------|---------|-----------|
+| **SQL** | Counting, ranking, aggregations | SQLite + SQLAlchemy |
+| **RAG** | Semantic search over review text | ChromaDB + sentence-transformers |
+| **Hybrid** | SQL pre-filter + RAG search | Both |
+
 
 
 **Stack:**
