@@ -216,3 +216,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Dataset (never commit - 372MB, download separately)
+data/
+*.sqlite
+*.csv
+*.sqbproj
+
+# Environment
+.env
