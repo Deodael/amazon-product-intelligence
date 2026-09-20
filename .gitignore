@@ -217,14 +217,11 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Dataset (never commit - 372MB, download separately)
-data/
+# Dataset (never commit full DB — download from Kaggle separately)
+data/*
+!data/sample.sqlite
+!data/.gitkeep
 *.sqlite
+!data/sample.sqlite
 *.csv
 *.sqbproj
-
-# Environment
-.env
-chroma_db/
-.DS_Store
-!data/sample.sqlite
