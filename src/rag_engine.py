@@ -3,8 +3,12 @@ RAG Engine for Amazon Product Intelligence.
 
 Builds a semantic search layer over Amazon review text using
 sentence-transformers embeddings and ChromaDB as the vector store.
+
+On Streamlit Cloud, uses /tmp for the vector store since the repo
+filesystem is read-only.
 """
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -15,10 +19,39 @@ from sentence_transformers import SentenceTransformer
 from src.sql_engine import SQLEngine
 
 
-DEFAULT_DB_PATH = Path.home() / "datasets" / "amazon_reviews" / "database.sqlite"
-CHROMA_PATH = Path("chroma_db")
+# Disable ChromaDB telemetry (harmless but noisy)
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 COLLECTION_NAME = "reviews"
+
+
+def _pick_chroma_path() -> Path:
+    """Choose a writable directory for the vector store."""
+    candidates = [
+        Path("/tmp/chroma_db"),                                    # Streamlit Cloud
+        Path(__file__).resolve().parent.parent / "chroma_db",      # Local repo
+        Path.cwd() / "chroma_db",                                  # Fallback
+    ]
+    for candidate in candidates:
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            # Verify writable
+            test_file = candidate / ".write_test"
+            test_file.touch()
+            test_file.unlink()
+            return candidate
+        except Exception:
+            continue
+    raise RuntimeError("Could not find a writable directory for ChromaDB.")
+
+
+CHROMA_PATH = _pick_chroma_path()
+
+
+def _is_cloud() -> bool:
+    """Detect whether we're running on Streamlit Cloud."""
+    return Path("/mount/src").exists()
 
 
 class RAGEngine:
@@ -27,7 +60,7 @@ class RAGEngine:
 
     Usage:
         engine = RAGEngine()
-        engine.index_reviews(limit=5000)
+        engine.index_reviews(limit=500)
         results = engine.search_reviews("stale coffee", n_results=5)
     """
 
@@ -36,19 +69,18 @@ class RAGEngine:
         db_path: Optional[str] = None,
         chroma_path: Optional[str] = None,
     ):
-        self.db_path = Path(db_path) if db_path else DEFAULT_DB_PATH
-        self.chroma_path = Path(chroma_path) if chroma_path else CHROMA_PATH
+        self.sql = SQLEngine(db_path)
 
-        # SQL layer for pulling reviews
-        self.sql = SQLEngine(str(self.db_path))
-
-        # Embedder: turns text into 384-dim vectors
+        # Embedder
         print(f"Loading embedding model: {EMBEDDING_MODEL}")
         self.embedder = SentenceTransformer(EMBEDDING_MODEL)
 
-        # ChromaDB persistent client — data lives on disk between runs
-        self.chroma_path.mkdir(exist_ok=True)
-        self.client = chromadb.PersistentClient(path=str(self.chroma_path))
+        # ChromaDB persistent client
+        path = Path(chroma_path) if chroma_path else CHROMA_PATH
+        path.mkdir(parents=True, exist_ok=True)
+        print(f"ChromaDB path: {path}")
+
+        self.client = chromadb.PersistentClient(path=str(path))
         self.collection = self.client.get_or_create_collection(
             name=COLLECTION_NAME,
             metadata={"hnsw:space": "cosine"},
@@ -56,22 +88,17 @@ class RAGEngine:
 
     # ---------- Indexing ----------
 
-    def index_reviews(self, limit: int = 5000, batch_size: int = 256) -> int:
-        """
-        Pull reviews from the SQLite DB, embed them, and store in ChromaDB.
-
-        Args:
-            limit: maximum number of reviews to index (start small).
-            batch_size: how many to embed at once.
-
-        Returns:
-            Number of reviews indexed.
-        """
-        # Skip if already populated
+    def index_reviews(self, limit: int = 500, batch_size: int = 128) -> int:
+        """Pull reviews from SQLite, embed them, and store in ChromaDB."""
         existing = self.collection.count()
         if existing > 0:
             print(f"Collection already has {existing} reviews — skipping index.")
             return existing
+
+        # Small limit on cloud to keep indexing fast
+        if _is_cloud():
+            limit = min(limit, 500)
+            print(f"Cloud detected — capping index to {limit} reviews.")
 
         print(f"Fetching up to {limit} reviews from SQLite...")
         df = self.sql.run_query(f"""
@@ -83,12 +110,10 @@ class RAGEngine:
         """)
         print(f"Fetched {len(df)} reviews.")
 
-        # Combine summary + text into one searchable string
         df["content"] = (
             df["Summary"].fillna("") + " " + df["Text"].fillna("")
         ).str.strip()
 
-        # Embed in batches
         print("Generating embeddings...")
         total = len(df)
         for start in range(0, total, batch_size):
@@ -119,11 +144,7 @@ class RAGEngine:
     # ---------- Search ----------
 
     def search_reviews(self, query: str, n_results: int = 5) -> pd.DataFrame:
-        """
-        Semantic search: find the most relevant reviews for a query.
-
-        Returns a DataFrame with columns: content, product_id, score, distance.
-        """
+        """Semantic search: find the most relevant reviews for a query."""
         if self.collection.count() == 0:
             raise RuntimeError(
                 "No reviews indexed. Call index_reviews() first."
@@ -159,7 +180,7 @@ class RAGEngine:
 
 if __name__ == "__main__":
     engine = RAGEngine()
-    engine.index_reviews(limit=2000)
+    engine.index_reviews(limit=500)
 
     print("\n" + "=" * 60)
     print("TEST QUERIES")
