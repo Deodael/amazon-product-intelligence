@@ -3,6 +3,10 @@ SQL Engine for Amazon Product Intelligence.
 
 Provides a clean interface for querying the Amazon Fine Food Reviews
 SQLite database, returning results as Pandas DataFrames.
+
+Path resolution order:
+    1. sample.sqlite in the repo (used for cloud deployment)
+    2. full database.sqlite in the user's home folder (used locally)
 """
 
 from pathlib import Path
@@ -14,10 +18,22 @@ from sqlalchemy.engine import Engine
 
 
 DEFAULT_DB_PATH = Path.home() / "datasets" / "amazon_reviews" / "database.sqlite"
-SAMPLE_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "sample.sqlite"
 
-# Use sample DB if it exists (deployment), otherwise fall back to full local DB
-DB_PATH = SAMPLE_DB_PATH if SAMPLE_DB_PATH.exists() else DEFAULT_DB_PATH
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_SAMPLE_PATHS = [
+    _REPO_ROOT / "data" / "sample.sqlite",
+    Path.cwd() / "data" / "sample.sqlite",
+    Path("/mount/src/amazon-product-intelligence/data/sample.sqlite"),
+]
+
+SAMPLE_DB_PATH = next((p for p in _SAMPLE_PATHS if p.exists()), None)
+
+if SAMPLE_DB_PATH is not None:
+    DB_PATH = SAMPLE_DB_PATH
+    print(f"Using sample DB: {SAMPLE_DB_PATH}")
+else:
+    DB_PATH = DEFAULT_DB_PATH
+    print(f"Sample DB not found, falling back to: {DB_PATH}")
 
 
 class SQLEngine:
