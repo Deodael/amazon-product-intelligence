@@ -225,3 +225,5 @@ data/*
 !data/sample.sqlite
 *.csv
 *.sqbproj
+.DS_Store
+screenshots/.DS_Store

@@ -1,103 +1,90 @@
 """
-FastAPI service for Amazon Product Intelligence.
+SQL Engine for Amazon Product Intelligence.
 
-Exposes the hybrid SQL + RAG system over HTTP.
-
-Run:
-    uvicorn src.api:app --reload --port 8000
-
-Then visit:
-    http://localhost:8000/docs       (interactive docs)
-    http://localhost:8000/ask?q=...  (query endpoint)
+Provides a clean interface for querying the Amazon Fine Food Reviews
+SQLite database, returning results as Pandas DataFrames.
 """
 
-from contextlib import asynccontextmanager
-from typing import Any
+from pathlib import Path
+from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel
-
-from src.router import Router
-
-
-# ---------- Lifespan: load the router once at startup ----------
-_router: Router | None = None
+import pandas as pd
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Load models once when the server starts."""
-    global _router
-    print("🚀 Starting up — loading router and models...")
-    _router = Router()
-    # Warm up the RAG model by doing a dummy search
-    # (skip if the collection is empty)
-    print("✅ Ready to serve requests.")
-    yield
-    print("👋 Shutting down.")
+DEFAULT_DB_PATH = Path.home() / "datasets" / "amazon_reviews" / "database.sqlite"
+SAMPLE_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "sample.sqlite"
+
+# Use sample DB if it exists (deployment), otherwise fall back to full local DB
+DB_PATH = SAMPLE_DB_PATH if SAMPLE_DB_PATH.exists() else DEFAULT_DB_PATH
 
 
-app = FastAPI(
-    title="Amazon Product Intelligence",
-    description="Hybrid SQL + RAG system for product review intelligence.",
-    version="0.1.0",
-    lifespan=lifespan,
-)
+class SQLEngine:
+    """Wrapper around the Amazon reviews SQLite database."""
+
+    def __init__(self, db_path: Optional[str] = None):
+        self.db_path = Path(db_path) if db_path else DB_PATH
+        if not self.db_path.exists():
+            raise FileNotFoundError(f"Database not found: {self.db_path}")
+        self.engine: Engine = create_engine(f"sqlite:///{self.db_path}")
+
+    def run_query(self, sql: str) -> pd.DataFrame:
+        """Execute any SQL query and return a Pandas DataFrame."""
+        with self.engine.connect() as conn:
+            return pd.read_sql_query(text(sql), conn)
+
+    def total_reviews(self) -> int:
+        df = self.run_query("SELECT COUNT(*) AS n FROM Reviews")
+        return int(df["n"].iloc[0])
+
+    def average_score(self) -> float:
+        df = self.run_query("SELECT AVG(Score) AS avg_score FROM Reviews")
+        return float(df["avg_score"].iloc[0])
+
+    def score_distribution(self) -> pd.DataFrame:
+        return self.run_query("""
+            SELECT Score, COUNT(*) AS count
+            FROM Reviews
+            GROUP BY Score
+            ORDER BY Score
+        """)
+
+    def top_products(self, n: int = 10) -> pd.DataFrame:
+        return self.run_query(f"""
+            SELECT ProductId, COUNT(*) AS review_count
+            FROM Reviews
+            GROUP BY ProductId
+            ORDER BY review_count DESC
+            LIMIT {n}
+        """)
+
+    def top_rated_products(self, min_reviews: int = 50, n: int = 10) -> pd.DataFrame:
+        return self.run_query(f"""
+            SELECT ProductId, AVG(Score) AS avg_score, COUNT(*) AS n
+            FROM Reviews
+            GROUP BY ProductId
+            HAVING n >= {min_reviews}
+            ORDER BY avg_score DESC
+            LIMIT {n}
+        """)
+
+    def reviews_for_product(self, product_id: str, limit: int = 20) -> pd.DataFrame:
+        safe_id = product_id.replace("'", "''")
+        return self.run_query(f"""
+            SELECT Id, Score, Summary, Text, Time
+            FROM Reviews
+            WHERE ProductId = '{safe_id}'
+            ORDER BY Time DESC
+            LIMIT {limit}
+        """)
 
 
-# ---------- Response schemas ----------
-
-class AskResponse(BaseModel):
-    route: str
-    reasoning: str
-    question: str
-    answer: Any
-
-
-class HealthResponse(BaseModel):
-    status: str
-    version: str
-
-
-# ---------- Endpoints ----------
-
-@app.get("/", tags=["meta"])
-def root():
-    """Root endpoint — describes the service."""
-    return {
-        "name": "Amazon Product Intelligence",
-        "description": "Hybrid SQL + RAG system over 568,454 Amazon reviews.",
-        "docs": "/docs",
-        "ask_endpoint": "/ask?q=your+question+here",
-    }
-
-
-@app.get("/health", response_model=HealthResponse, tags=["meta"])
-def health():
-    """Liveness check — useful for deployment platforms."""
-    return {"status": "ok", "version": app.version}
-
-
-@app.get("/ask", response_model=AskResponse, tags=["query"])
-def ask(
-    q: str = Query(
-        ...,
-        min_length=3,
-        max_length=500,
-        description="Your natural-language question about the reviews.",
-        examples=["How many 5-star reviews are there?"],
-    ),
-):
-    """
-    Ask a natural-language question. The router decides whether to use
-    SQL, RAG, or hybrid, executes it, and returns the answer.
-    """
-    if _router is None:
-        raise HTTPException(status_code=503, detail="Server is still starting up.")
-
-    try:
-        result = _router.answer(q)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Query failed: {e}")
-
-    return AskResponse(**result)
+if __name__ == "__main__":
+    engine = SQLEngine()
+    print(f"Total reviews: {engine.total_reviews():,}")
+    print(f"Average score: {engine.average_score():.2f}")
+    print("\nScore distribution:")
+    print(engine.score_distribution().to_string(index=False))
+    print("\nTop 5 products by review count:")
+    print(engine.top_products(n=5).to_string(index=False))
