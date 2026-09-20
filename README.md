@@ -2,7 +2,15 @@
 # Amazon Product Intelligence
 
 > A hybrid SQL + RAG system for product review intelligence — FastAPI, LangChain, ChromaDB, and semantic search over 568,454 Amazon reviews.
+## 🌐 Live Demo
 
+🚀 **[Try the app live →](https://amazon-appuct-intelligence-6abwxx46kxgzxnn6ysa4s.streamlit.app)**
+
+Ask questions like:
+- *"How many 5-star reviews are there?"* → routed to SQL
+- *"What do people complain about in coffee?"* → routed to RAG
+
+**Note:** The live app uses a 50,000-review sample for fast cloud deployment. Full 568,454-review version runs locally.
 ## 🎯 What This Project Does
 
 This system answers questions about the Amazon Fine Food Reviews dataset using **two complementary engines**:
