@@ -14,12 +14,17 @@ from sqlalchemy.engine import Engine
 
 
 DEFAULT_DB_PATH = Path.home() / "datasets" / "amazon_reviews" / "database.sqlite"
+SAMPLE_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "sample.sqlite"
+
+# Use sample DB if it exists (deployment), otherwise fall back to full local DB
+DB_PATH = SAMPLE_DB_PATH if SAMPLE_DB_PATH.exists() else DEFAULT_DB_PATH
+
 
 class SQLEngine:
     """Wrapper around the Amazon reviews SQLite database."""
 
     def __init__(self, db_path: Optional[str] = None):
-        self.db_path = Path(db_path) if db_path else DEFAULT_DB_PATH
+        self.db_path = Path(db_path) if db_path else DB_PATH
         if not self.db_path.exists():
             raise FileNotFoundError(f"Database not found: {self.db_path}")
         self.engine: Engine = create_engine(f"sqlite:///{self.db_path}")
