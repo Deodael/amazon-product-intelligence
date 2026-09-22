@@ -45,7 +45,7 @@ st.markdown(
 
     This system uses a **router** to decide whether your question needs:
     - **SQL** — for counting, ranking, aggregations
-    - **RAG** — for thematic/semantic questions about review content
+    - **RAG** — for thematic/semantic questions (LLM-synthesized answers)
     - **Hybrid** — both combined
     """
 )
@@ -68,7 +68,7 @@ with st.sidebar:
         """
     )
     st.divider()
-    st.caption("Built with FastAPI, ChromaDB, and sentence-transformers.")
+    st.caption("Built with FastAPI, ChromaDB, Groq, and sentence-transformers.")
 
 
 question = st.text_input(
@@ -85,7 +85,22 @@ if ask_button and question.strip():
 
     with st.spinner("Thinking..."):
         try:
-            result = router.answer(question)
+            # Classify first to determine if synthesis is needed
+            route_result = router.classify(question)
+
+            if route_result.route.value == "rag":
+                # RAG route: use LLM synthesis for a written answer
+                synth = router.rag.synthesize(question, n_results=5)
+                result = {
+                    "route": "rag",
+                    "reasoning": route_result.reasoning,
+                    "question": question,
+                    "answer": synth["answer"],
+                    "sources": synth["sources"],
+                }
+            else:
+                # SQL and hybrid use existing logic
+                result = router.answer(question)
         except Exception as e:
             err = str(e).lower()
             if "index" in err or "chroma" in err or "collection" in err:
@@ -106,15 +121,24 @@ if ask_button and question.strip():
     st.caption(f"*Reasoning: {result['reasoning']}*")
 
     st.subheader("Answer")
-
     answer = result["answer"]
 
     if isinstance(answer, str):
-        st.markdown(f"### {answer}")
+        # LLM-synthesized answer (RAG route) — display as prose
+        st.markdown(answer)
+
+        # Show the source reviews the LLM used
+        if result.get("sources"):
+            with st.expander(f"📚 Show {len(result['sources'])} source reviews"):
+                for i, src in enumerate(result["sources"], 1):
+                    st.markdown(f"**Review {i}** (score {src['score']}/5):")
+                    st.write(src["content"][:500])
+                    st.divider()
 
     elif isinstance(answer, list) and answer and isinstance(answer[0], dict):
         first = answer[0]
         if "content" in first:
+            # RAG results rendered as cards (fallback path)
             for i, item in enumerate(answer, 1):
                 with st.expander(
                     f"**Match {i}** — distance {item['distance']}",
@@ -125,6 +149,7 @@ if ask_button and question.strip():
                         f"Product: `{item['product_id']}` · Score: {item['score']}★"
                     )
         else:
+            # SQL results rendered as a table
             import pandas as pd
             st.dataframe(pd.DataFrame(answer))
     else:
