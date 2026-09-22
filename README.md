@@ -7,9 +7,8 @@
 🚀 **[Try the app live →](https://amazon-appuct-intelligence-6abwxx46kxgzxnn6ysa4s.streamlit.app)**
 
 Ask questions like:
-- *"How many 5-star reviews are there?"* → routed to SQL
-- *"What do people complain about in coffee?"* → routed to RAG
-
+- *"How many 5-star reviews are there?"* → SQL
+- *"What do people complain about in coffee?"* → RAG with LLM synthesis
 **Note:** The live app uses a 50,000-review sample for fast cloud deployment. Full 568,454-review version runs locally.
 ## 🎯 What This Project Does
 
