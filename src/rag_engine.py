@@ -4,8 +4,8 @@ RAG Engine for Amazon Product Intelligence.
 Builds a semantic search layer over Amazon review text using
 sentence-transformers embeddings and ChromaDB as the vector store.
 
-On Streamlit Cloud, uses /tmp for the vector store since the repo
-filesystem is read-only.
+Includes optional LLM synthesis via Groq for generating answers
+from retrieved reviews.
 """
 
 import os
@@ -14,16 +14,20 @@ from typing import Optional
 
 import chromadb
 import pandas as pd
+from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 
 from src.sql_engine import SQLEngine
 
+# Load environment variables (.env file)
+load_dotenv()
 
 # Disable ChromaDB telemetry (harmless but noisy)
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 COLLECTION_NAME = "reviews"
+GROQ_MODEL = "openai/gpt-oss-120b"
 
 
 def _pick_chroma_path() -> Path:
@@ -36,7 +40,6 @@ def _pick_chroma_path() -> Path:
     for candidate in candidates:
         try:
             candidate.mkdir(parents=True, exist_ok=True)
-            # Verify writable
             test_file = candidate / ".write_test"
             test_file.touch()
             test_file.unlink()
@@ -62,6 +65,7 @@ class RAGEngine:
         engine = RAGEngine()
         engine.index_reviews(limit=500)
         results = engine.search_reviews("stale coffee", n_results=5)
+        answer = engine.synthesize("What do people complain about in coffee?")
     """
 
     def __init__(
@@ -141,7 +145,7 @@ class RAGEngine:
         print(f"✅ Indexed {total} reviews.")
         return total
 
-    # ---------- Search ----------
+    # ---------- Search (Retrieval) ----------
 
     def search_reviews(self, query: str, n_results: int = 5) -> pd.DataFrame:
         """Semantic search: find the most relevant reviews for a query."""
@@ -177,13 +181,72 @@ class RAGEngine:
 
         return pd.DataFrame(rows)
 
+    # ---------- Synthesis (Generation) ----------
+
+    def synthesize(self, query: str, n_results: int = 5) -> dict:
+        """
+        Retrieve relevant reviews and use an LLM (via Groq) to synthesize
+        a natural-language answer.
+        """
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            raise RuntimeError("GROQ_API_KEY not set in environment.")
+
+        # Import here so the engine works even without the groq package
+        # until synthesize() is actually called.
+        try:
+            from groq import Groq
+        except ImportError as e:
+            raise RuntimeError(f"groq package not installed: {e}")
+
+        # Step 1: Retrieve
+        results = self.search_reviews(query, n_results=n_results)
+
+        # Step 2: Build context
+        context = "\n\n".join(
+            f"Review {i+1} (score {row['score']}/5): {row['content'][:500]}"
+            for i, (_, row) in enumerate(results.iterrows())
+        )
+
+        prompt = f"""You are analyzing Amazon product reviews to answer a user's question.
+
+Question: {query}
+
+Here are the {len(results)} most relevant reviews:
+
+{context}
+
+Based only on the reviews above, provide a concise 2-3 sentence answer to the question.
+If the reviews don't directly address the question, say so. Cite specific patterns
+you notice (e.g., "several customers mentioned..."). Do not invent details.
+"""
+
+        # Step 3: Call the LLM
+        client = Groq(api_key=api_key)
+        response = client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {"role": "system", "content": "You are a helpful, accurate analyst."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.3,
+            max_tokens=300,
+        )
+
+        answer = response.choices[0].message.content
+
+        return {
+            "answer": answer,
+            "sources": results.to_dict(orient="records"),
+        }
+
 
 if __name__ == "__main__":
     engine = RAGEngine()
     engine.index_reviews(limit=500)
 
     print("\n" + "=" * 60)
-    print("TEST QUERIES")
+    print("RETRIEVAL TEST")
     print("=" * 60)
 
     for query in [
@@ -196,3 +259,15 @@ if __name__ == "__main__":
         for _, row in results.iterrows():
             snippet = row["content"][:120].replace("\n", " ")
             print(f"  [dist={row['distance']:.3f}] {snippet}...")
+
+    print("\n" + "=" * 60)
+    print("SYNTHESIS TEST (requires GROQ_API_KEY in .env)")
+    print("=" * 60)
+
+    try:
+        result = engine.synthesize("What do people complain about in coffee?")
+        print("\n📝 Synthesized answer:")
+        print(result["answer"])
+        print(f"\n(based on {len(result['sources'])} retrieved reviews)")
+    except Exception as e:
+        print(f"⚠️  Synthesis skipped: {e}")
